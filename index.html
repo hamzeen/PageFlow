@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title></title>
+    <script src="jquery.min.js"></script>
+	<script src="jquery.easing.1.3.js"></script>
+	<script src="data.js"></script>
+    <link rel="stylesheet" href="fonts.css" type="text/css" media="screen" title="no title" charset="utf-8">
+	<link rel="stylesheet" type="text/css" media="all" href="style.css?v=4">
+	
+</head>
+<body>
+	<div style="display:block;color:#fff;position: fixed;width:80%;height:10%;z-index:1000;" id="navigation">
+		<ul id="nav">
+			<li id="1" class="selected">Home</li>
+			<li id="2" class="">About</li>
+			<li id="3" class="">Contact</li>
+		</ul>
+		<div id="content">
+			<p>Welcome to motion based navigation</p>
+		</div>
+	</div>
+	<div style="position: fixed;width:100%;height:100%;z-index:-2;" id="slides">
+		<ul id="gallery" style="list-style-type: none;list-style:none;">
+			<li id="1" class="empty active"><img style="width:100%;height:100%;" src="01.jpg"></li>
+			<li id="2" class="empty"><img style="width:100%;height:100%;" src="02.jpg"></li>
+			<li id="3" class="empty"><img style="width:100%;height:100%;" src="03.jpg"></li>
+		</ul>
+	</div>
+	<div id="credits">
+		<p>An experiment by Hamzeen. H.</p>
+	</div>
+<div id="container">
+	
+    <video id="webcam" autoplay width="100%" height="100%"></video>
+    <canvas id="canvas-source" width="320" height="240"></canvas>
+    <canvas id="canvas-blended" width="320" height="240"></canvas>
+
+    <div class="hotspot" id="area1">-</div>
+    <div class="hotspot" id="area2">-</div>
+</div>
+
+<script>
+
+
+    var timeOut, lastImageData;
+    var video = $('#webcam')[0];
+    var canvasSource = $("#canvas-source")[0];
+    var canvasBlended = $("#canvas-blended")[0];
+    var contextSource = canvasSource.getContext('2d');
+    var contextBlended = canvasBlended.getContext('2d');
+    var hotspots = [];
+    var scaleRatio = 0;
+	var frmCount = 0;
+
+
+    // get the webcam from the user
+    navigator.webkitGetUserMedia({ video: true },
+        function(stream) {
+            video.src = window.webkitURL.createObjectURL(stream);
+            webcamReady();
+        },
+        function(e) { alert('Webcam error!', e); }
+    );
+
+
+    // webcam is ready
+    function webcamReady() {
+        contextSource.translate(canvasSource.width, 0);
+        contextSource.scale(-1, 1);
+
+        scaleRatio = canvasSource.width / $(video).width();
+
+        gethotspots();
+        tick();
+    }
+
+
+    /**
+     * collect all the hotspots
+     */
+    function gethotspots() {
+        $(".hotspot").each(function() {
+            var el = $(this);
+            var pos = el.position();
+
+            hotspots.push({
+                ready   : true,
+                el      : el,
+                area    : {
+                    x       : pos.left * scaleRatio,
+                    y       : pos.top * scaleRatio,
+                    width   : el.width() * scaleRatio,
+                    height  : el.height() * scaleRatio
+                }
+            });
+        });
+    }
+
+
+    /**
+     * ticker for movement detection
+     */
+    function tick() {
+		frmCount ++;
+        contextSource.drawImage(video, 0, 0, 320, 240);
+        blend();
+        checkHotspots();
+        window.webkitRequestAnimationFrame(tick);
+    }
+
+
+    /**
+     * fast equivalent to Math.abs();
+     * @param value
+     * @return {*}
+     */
+    function fastAbs(value) {
+        return (value ^ (value >> 31)) - (value >> 31);
+    }
+
+    /**
+     * make black or white
+     * @param   number  value
+     * @return  number
+     */
+    function threshold(value) {
+        return (value > 25) ? 0xFF : 0;
+    }
+
+
+    /**
+     * blend two images into a new imageData
+     * @param   imageData   target
+     * @param   imageData   data1
+     * @param   imageData   data2
+     */
+    function differenceAccuracy(target, data1, data2) {
+        if (data1.length != data2.length)
+            return null;
+        var i = 0;
+        var length = (data1.length * 0.25);
+        while (i < length) {
+            var average1 = (data1[4*i] + data1[4*i+1] + data1[4*i+2]) / 3;
+            var average2 = (data2[4*i] + data2[4*i+1] + data2[4*i+2]) / 3;
+            var diff = threshold(fastAbs(average1 - average2));
+            target[4*i] = diff;
+            target[4*i+1] = diff;
+            target[4*i+2] = diff;
+            target[4*i+3] = 0xFF;
+            ++i;
+        }
+    }
+
+
+    /**
+     * blend the webcam data together
+     */
+    function blend() {
+        var width = canvasSource.width;
+        var height = canvasSource.height;
+
+        // get webcam image data
+        var sourceData = contextSource.getImageData(0, 0, width, height);
+
+        // create an image if the previous image doesn’t exist
+        if (!lastImageData)
+            lastImageData = contextSource.getImageData(0, 0, width, height);
+
+        // create a ImageData instance to receive the blended result
+        var blendedData = contextSource.createImageData(width, height);
+
+        // blend the 2 images
+        differenceAccuracy(blendedData.data, sourceData.data, lastImageData.data);
+		
+		//erode
+		erode(blendedData.data,width,height);
+
+        // draw the result in a canvas
+        contextBlended.putImageData(blendedData, 0, 0);
+
+        // store the current webcam image
+        lastImageData = sourceData;
+    }
+	
+	function erode(image, width,height){
+		for(var i=0;i<image.length;i++) {
+			if(i>width+2 && i<(width*(height-1))-2){
+				if(image[4*i]==0xFF && 
+				!(image[4*(i-1)]==0xFF || 
+					image[4*(i+1)]==0xFF || 
+						image[4*(i-width)]==0xFF || 
+							image[4*(i+width)]==0xFF)){
+					image[4*i] = 0;
+					image[4*i+1] = 0;
+					image[4*i+2] = 0;
+				}
+			}
+        }
+	}
+
+    /**
+     * check if the areas are hit
+     */
+    function checkHotspots() {
+        // loop over the note areas
+        for (var r=0; r<hotspots.length; ++r) {
+            var hotspot = hotspots[r];
+
+            // get the pixels in a note area from the blended image
+            var blendedData = contextBlended.getImageData(
+                    hotspot.area.x,
+                    hotspot.area.y,
+                    hotspot.area.width,
+                    hotspot.area.height);
+
+            var i = 0;
+            var average = 0;
+
+            // loop over the pixels
+            while (i < (blendedData.data.length / 4)) {
+                // make an average between the color channel
+                average += (blendedData.data[i*4] + blendedData.data[i*4+1] + blendedData.data[i*4+2]) / 3;
+                ++i;
+            }
+
+            // calculate an average between of the color values of the note area
+            average = Math.round(average / (blendedData.data.length / 4));
+
+            // over a small limit, consider that a movement is detected
+            if (average > 20 && frmCount%6==0) {
+                hit(r, average);
+            }
+        }
+    }
+
+    /**
+     * hit!
+     * @param   hotspot     index
+     * @param   number      hit
+     */
+    function hit(index, average) {
+        var hotspot = hotspots[index];
+		if(index==0){
+			$current = $('#gallery li.active');
+			var id = $current.attr('id');
+			$current.removeClass("active");
+			
+			$("#content").slideUp(100, 'easeOutQuad', function() {});
+			$("#nav li.selected").removeClass("selected");
+			
+			$("#gallery li").each(function() {
+				if(id==1 && $(this).attr('id')==3 || id-$(this).attr('id')==1){
+					$(this).addClass("active");
+					
+					var changeToId = $(this).attr('id')-1;
+					var strSelected = "#nav >#"+$(this).attr('id');
+					$("#content").slideDown(600, 'easeOutQuad', function() {
+						$("#content").html(_items[changeToId].content);
+					});
+					
+					$(strSelected).addClass("selected");
+					
+				}
+			});
+		}else if(index==1){
+			$current = $('#gallery li.active');
+			var id = $current.attr('id');
+			$current.removeClass("active");
+			
+			$("#content").slideUp(100, 'easeOutQuad', function() {});
+			$("#nav li.selected").removeClass("selected");
+			
+			$("#gallery li").each(function() {
+				if(id==3 && $(this).attr('id')==1 || $(this).attr('id')-id==1){
+					$(this).addClass("active");
+					
+					var changeToId = $(this).attr('id')-1;
+					var strSelected = "#nav >#"+$(this).attr('id');
+					$("#content").slideDown(600, 'easeOutQuad', function() {
+						$("#content").html(_items[changeToId].content);
+					});
+					$(strSelected).addClass("selected");
+				}
+			});
+		}
+
+        if(hotspot.ready) {
+            hotspot.ready = false;
+            hotspot.el.addClass("hit");
+			hotspot.el.html(" ");
+
+            setTimeout(function() {
+                hotspot.ready = true;
+                hotspot.el.removeClass("hit");
+				if(index==0){
+					hotspot.el.html("<");
+				}else if(index==1){
+					hotspot.el.html(">");
+				}
+            }, 500);
+        }
+    }
+
+</script>
+
+</body>
+</html>
